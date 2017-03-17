@@ -6,6 +6,6 @@ import time
 # sim = yt.simulation("test_dir", "ExodusII")
 with memory_checker(1):
     time.sleep(2)
-    sim = yt.simulation("hundred_files", "ExodusII")
+    sim = yt.simulation("test_dir", "ExodusII")
     sim.get_time_series()
     time.sleep(2)
