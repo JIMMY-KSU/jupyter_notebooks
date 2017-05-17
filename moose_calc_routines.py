@@ -76,6 +76,14 @@ def bc_terms_momentum_traction(uvec, nvec, p, k, eps, x, y, symbolic=True, parts
     turbulent_visc_term = -(nvec.transpose() * (rho * cmu * k**2 / eps * (gradVec2(uvec, x, y) + gradVec2(uvec, x, y).transpose()))).transpose()
     return visc_term + turbulent_visc_term + pressure_term
 
+def L_momentum_traction_no_turbulence(uvec, p, x, y):
+    mu, rho = sp.var('mu rho')
+    visc_term = (-mu * divTen2(gradVec2(uvec, x, y) + gradVec2(uvec, x, y).transpose(), x, y)).transpose()
+    conv_term = rho * uvec.transpose() * gradVec2(uvec, x, y)
+    pressure_term = gradScalar2(p, x, y).transpose()
+    source = conv_term + visc_term + pressure_term
+    return source
+
 def bc_terms_momentum_traction_no_turbulence(uvec, nvec, p, x, y, parts=True):
     mu, rho = sp.var('mu rho')
     # visc_term = (-mu * nvec.transpose() * (gradVec2(uvec, x, y) + gradVec2(uvec, x, y).transpose())).transpose()
@@ -88,7 +96,7 @@ def bc_terms_momentum_traction_no_turbulence(uvec, nvec, p, x, y, parts=True):
 
 def L_momentum_laplace(uvec, p, k, eps, x, y):
     cmu = 0.09
-    mu, rho = var('mu rho')
+    mu, rho = sp.var('mu rho')
     visc_term = (-mu * divTen2(gradVec2(uvec, x, y), x, y)).transpose()
     conv_term = rho * uvec.transpose() * gradVec2(uvec, x, y)
     pressure_term = gradScalar2(p, x, y).transpose()
@@ -132,20 +140,26 @@ def L_eps(uvec, k, eps, x, y):
         L += term
     return L
 
+def bc_terms_eps(nvec, k, eps, x, y):
+    cmu = 0.09
+    sigeps = 1.3
+    mu, rho = sp.var('mu rho')
+    return - nvec.transpose() * (mu + rho * cmu * k**2 / eps / sigeps) * gradScalar2(eps, x, y)
+
 '''
 Boundary condition operators
 '''
 
 def wall_function_momentum_traction(uvec, nvec, p, k, eps, x, y, tau_type, symbolic=True, parts=True):
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     if symbolic:
         cmu = sp.var('c_{\mu}')
         yStarPlus = sp.var('y_{\mu}')
     else:
         cmu = 0.09
-        yStarPlus = 1.1
+        yStarPlus = 11.06
     if tau_type == "vel":
-        uvec_norm = sp.sqrt(uvec.transpose() * uvec)
+        uvec_norm = sp.sqrt(uvec.transpose() * uvec)[0, 0]
         uTau = uvec_norm / yStarPlus
     elif tau_type == "kin":
         uTau = cmu**.25 * sp.sqrt(k)
@@ -156,8 +170,8 @@ def wall_function_momentum_traction(uvec, nvec, p, k, eps, x, y, tau_type, symbo
     normal_stress_term = (-nvec.transpose() * mu * strain_rate(uvec, x, y) * nvec * nvec.transpose()).transpose()
     tangential_stress_term = uTau / yStarPlus * uvec
     muT = rho * cmu * k * k / eps
-    # turbulent_stress_term = (-nvec.transpose() * muT * strain_rate(uvec, x, y)).transpose()
-    turbulent_stress_term = (-nvec.transpose() * strain_rate(uvec, x, y)).transpose()
+    turbulent_stress_term = (-nvec.transpose() * muT * strain_rate(uvec, x, y)).transpose()
+    # turbulent_stress_term = (-nvec.transpose() * strain_rate(uvec, x, y)).transpose()
     # turbulent_stress_term = (-nvec.transpose() * sp.Matrix([[1, 1], [1, 1]])).transpose()
     if parts:
         pressure_term = (nvec.transpose() * eye2() * p).transpose()
@@ -181,6 +195,14 @@ def no_bc_bc(uvec, nvec, p, x, y, parts=True):
 
 def vacuum(u, nvec):
     return u / sp.Integer(2)
+
+def ins_epsilon_wall_function_bc(nvec, k, eps, x, y):
+    cmu = 0.09
+    sigEps = 1.3
+    kappa = 0.41
+    mu, rho = sp.var('mu rho')
+    muT = rho * cmu * k**2 / eps
+    return - (mu + muT / sigEps) * kappa * cmu**.25 * sp.sqrt(k) * eps * rho / muT
 
 '''
 Writing utilities
@@ -292,45 +314,76 @@ class cd:
         os.chdir(self.savedPath)
 
 '''
-Function for running MMS simulation cases
+Function for running MMS simulation cases; currently programmed for addressing BC testing
 '''
-def run_many_cases(h_list, source_dict, bounds_dict, base):
+def mms_bc_cases(h_list, neumann_source_dict, volume_source_dict, solution_dict,
+                   bounds_dict, base, test_var="u", natural=False):
     with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
         for h in h_list:
             for bnd, anti_bnds in bounds_dict.items():
-                call(["navier_stokes-opt", "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
+                args = ["navier_stokes-opt", "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
                       "mu=1.5", "rho=2.5",
-                      "BCs/u/boundary=" + anti_bnds,
-                      "BCs/u_fn_neumann/boundary=" + bnd,
+                      "BCs/" + str(test_var) + "/boundary=" + anti_bnds,
+                      "BCs/" + str(test_var) + "_fn_neumann/boundary=" + bnd,
                       "Outputs/csv/file_base=" + h + "_" + bnd + "_" + base,
-                     "Functions/u_bc_func/value=" + source_dict[bnd]])
+                      "Outputs/exodus/file_base=" + h + "_" + bnd + "_" + base,
+                      "Functions/" + str(test_var) + "_bc_func/value=" + neumann_source_dict[bnd]]
+                if not natural:
+                    args.append("BCs/" + str(test_var) + "_test/boundary=" + bnd)
+                # import pdb; pdb.set_trace()
+                for var, func in volume_source_dict.items():
+                    string = "Functions/" + var + "_source_func/value=" + str(func)
+                    args.append(string)
+                for var, func in solution_dict.items():
+                    args.append("Functions/" + var + "_func/value=" + str(func))
+                call(args)
+
+'''
+Function for running MMS simulation cases; currently programmed for kernels only
+'''
+def mms_kernel_cases(h_list, volume_source_dict, solution_dict, base):
+    with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
+        for h in h_list:
+            args = ["navier_stokes-opt", "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
+                  "mu=1.5", "rho=2.5",
+                  "Outputs/csv/file_base=" + h + "_" + base,
+                  "Outputs/exodus/file_base=" + h + "_" + base]
+            for var, func in volume_source_dict.items():
+                string = "Functions/" + var + "_source_func/value=" + str(func)
+                args.append(string)
+            for var, func in solution_dict.items():
+                args.append("Functions/" + var + "_func/value=" + str(func))
+            call(args)
+
 
 '''
 Function for preparing order of accuracy plots
 '''
-def plot_order_accuracy(boundary, h_array, base):
+def plot_order_accuracy(h_array, base, optional_save_string='', boundary=''):
     with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
+        if boundary:
+            boundary = "_" + str(boundary)
+        if optional_save_string:
+            optional_save_string = "_" + str(optional_save_string)
         variable_names = {}
-        init_data = np.genfromtxt(str(int(1/h_array[0])) + "_" + str(boundary) + "_" + str(base) + ".csv", \
-                                  dtype=float, names=True, delimiter=',')
+        data_file = str(int(1/h_array[0])) + boundary + "_" + str(base) + ".csv"
+        init_data = np.genfromtxt(data_file, dtype=float, names=True, delimiter=',')
         for name in init_data.dtype.names:
             if name != 'time':
                 variable_names[name] = np.array([])
                 variable_names[name] = np.append(variable_names[name], init_data[name][-1])
         for h in h_array[1:]:
-            data = np.genfromtxt(str(int(1/h)) + "_" + str(boundary) + "_" + str(base) + ".csv", \
-                                dtype=float, names=True, delimiter=',')
+            data_file = str(int(1/h)) + boundary + "_" + str(base) + ".csv"
+            data = np.genfromtxt(data_file, dtype=float, names=True, delimiter=',')
             for name in variable_names:
                 variable_names[name] = np.append(variable_names[name], data[name][-1])
     for name, data_array in variable_names.items():
-        plt.scatter(np.log(h_array), np.log(data_array), label=name)
         z = np.polyfit(np.log(h_array), np.log(data_array), 1)
         p = np.poly1d(z)
         plt.plot(np.log(h_array), p(np.log(h_array)), '-')
         equation = "y=%.3fx+%.3f" % (z[0],z[1])
-        plot_point = (np.log(h_array).min() + np.log(h_array).max()) / 2.
-        plt.annotate(equation, xy=(plot_point, p(plot_point)), xytext=(.9 * plot_point, 1.1 * p(plot_point)),
-             arrowprops=dict(arrowstyle='->'))#, connectionstyle='arc3,rad=-0.5'))
+        plt.scatter(np.log(h_array), np.log(data_array), label=name + "; " + equation)
     plt.legend()
-    plt.savefig("/home/lindsayad/Pictures/" + str(boundary) + "_" + str(base) + ".eps", format='eps')
-    plt.show()
+    save_string = "/home/lindsayad/Pictures/" + str(base) + boundary + optional_save_string + ".eps"
+    plt.savefig(save_string, format='eps')
+    plt.close()
