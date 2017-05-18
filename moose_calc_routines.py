@@ -140,6 +140,9 @@ def L_eps(uvec, k, eps, x, y):
         L += term
     return L
 
+def L_coupled_gradient_source(v, x, y):
+    return (-gradScalar2(v, x, y).transpose() * gradScalar2(v, x, y))[0,0]
+
 def bc_terms_eps(nvec, k, eps, x, y):
     cmu = 0.09
     sigeps = 1.3
@@ -203,6 +206,12 @@ def ins_epsilon_wall_function_bc(nvec, k, eps, x, y):
     mu, rho = sp.var('mu rho')
     muT = rho * cmu * k**2 / eps
     return - (mu + muT / sigEps) * kappa * cmu**.25 * sp.sqrt(k) * eps * rho / muT
+
+def coupled_gradient_bc(nvec, v, x, y):
+    return (-nvec.transpose() * gradScalar2(v, x, y))[0,0]
+
+def coupled_value_bc(v, x, y):
+    return -v
 
 '''
 Writing utilities
@@ -317,12 +326,12 @@ class cd:
 Function for running MMS simulation cases; currently programmed for addressing BC testing
 '''
 def mms_bc_cases(h_list, neumann_source_dict, volume_source_dict, solution_dict,
-                   bounds_dict, base, test_var="u", natural=False):
-    with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
+                   bounds_dict, base, exe_path, input_dir, test_var="u", natural=False):
+    with cd(input_dir):
         for h in h_list:
             for bnd, anti_bnds in bounds_dict.items():
-                args = ["navier_stokes-opt", "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
-                      "mu=1.5", "rho=2.5",
+                args = [exe_path, "-i", base + ".i", "Mesh/nx=" + h, #"Mesh/ny=" + h,
+                      # "mu=1.5", "rho=2.5",
                       "BCs/" + str(test_var) + "/boundary=" + anti_bnds,
                       "BCs/" + str(test_var) + "_fn_neumann/boundary=" + bnd,
                       "Outputs/csv/file_base=" + h + "_" + bnd + "_" + base,
@@ -341,11 +350,11 @@ def mms_bc_cases(h_list, neumann_source_dict, volume_source_dict, solution_dict,
 '''
 Function for running MMS simulation cases; currently programmed for kernels only
 '''
-def mms_kernel_cases(h_list, volume_source_dict, solution_dict, base):
-    with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
+def mms_kernel_cases(h_list, volume_source_dict, solution_dict, base, exe_path, input_dir):
+    with cd(input_dir):
         for h in h_list:
-            args = ["navier_stokes-opt", "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
-                  "mu=1.5", "rho=2.5",
+            args = [exe_path, "-i", base + ".i", "Mesh/nx=" + h, "Mesh/ny=" + h,
+                  # "mu=1.5", "rho=2.5",
                   "Outputs/csv/file_base=" + h + "_" + base,
                   "Outputs/exodus/file_base=" + h + "_" + base]
             for var, func in volume_source_dict.items():
@@ -359,8 +368,8 @@ def mms_kernel_cases(h_list, volume_source_dict, solution_dict, base):
 '''
 Function for preparing order of accuracy plots
 '''
-def plot_order_accuracy(h_array, base, optional_save_string='', boundary=''):
-    with cd("/home/lindsayad/projects/moose/modules/navier_stokes/tests/mms"):
+def plot_order_accuracy(h_array, base, input_dir, optional_save_string='', boundary=''):
+    with cd(input_dir):
         if boundary:
             boundary = "_" + str(boundary)
         if optional_save_string:
@@ -381,9 +390,10 @@ def plot_order_accuracy(h_array, base, optional_save_string='', boundary=''):
         z = np.polyfit(np.log(h_array), np.log(data_array), 1)
         p = np.poly1d(z)
         plt.plot(np.log(h_array), p(np.log(h_array)), '-')
-        equation = "y=%.3fx+%.3f" % (z[0],z[1])
+        equation = "y=%.1fx+%.1f" % (z[0],z[1])
         plt.scatter(np.log(h_array), np.log(data_array), label=name + "; " + equation)
     plt.legend()
-    save_string = "/home/lindsayad/Pictures/" + str(base) + boundary + optional_save_string + ".eps"
-    plt.savefig(save_string, format='eps')
+    save_string = "/home/lindsayad/Pictures/" + str(base) + boundary + optional_save_string
+    plt.savefig(save_string + ".eps", format='eps')
+    plt.savefig(save_string + ".png", format='png')
     plt.close()
